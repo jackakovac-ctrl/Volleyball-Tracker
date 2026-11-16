@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Match Log</title>
+<style>
+  :root {
+    --floor: #e9dcc3;
+    --paper: #f7f1e3;
+    --ink: #1c2b3a;
+    --court: #1f5d7a;
+    --ball: #e8833a;
+    --line: #c9b78f;
+    --good: #2e7d4f;
+    --bad: #b03a2e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --floor: #1a2430;
+      --paper: #223140;
+      --ink: #eee6d3;
+      --court: #6bb3d1;
+      --ball: #f0944f;
+      --line: #3a4d60;
+      --good: #6cc48e;
+      --bad: #e67a6e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 16px 64px;
+    background: var(--floor); color: var(--ink);
+    font-family: "Trebuchet MS", "Segoe UI", sans-serif; line-height: 1.5;
+  }
+  main { max-width: 860px; margin: 0 auto; }
+  h1 { font-family: Georgia, "Times New Roman", serif; font-size: 2.2rem; margin: 0 0 4px; }
+  h2 { font-family: Georgia, serif; font-size: 1.3rem; margin: 32px 0 10px; }
+  .sub { margin: 0 0 24px; opacity: .75; }
+  .card { background: var(--paper); border: 2px solid var(--line); border-radius: 6px; padding: 16px; }
+  .totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; }
+  .totals div { border-left: 4px solid var(--ball); padding-left: 10px; }
+  .totals b { display: block; font-size: 1.7rem; font-family: Georgia, serif; }
+  .totals span { font-size: .85rem; opacity: .75; }
+  .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+  label { display: flex; flex-direction: column; font-size: .85rem; gap: 3px; }
+  input {
+    font: inherit; padding: 8px; border: 2px solid var(--line); border-radius: 4px;
+    background: var(--floor); color: var(--ink);
+  }
+  input:focus-visible, button:focus-visible { outline: 3px solid var(--ball); outline-offset: 1px; }
+  button {
+    font: inherit; font-weight: bold; cursor: pointer; padding: 10px 18px; margin-top: 14px;
+    background: var(--court); color: #fff; border: 0; border-radius: 4px;
+  }
+  button.small { margin: 0; padding: 4px 10px; background: transparent; color: var(--bad); border: 1px solid var(--bad); font-weight: normal; }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; min-width: 640px; }
+  th, td { padding: 8px 6px; text-align: right; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+  .pos { color: var(--good); font-weight: bold; }
+  .neg { color: var(--bad); font-weight: bold; }
+  .empty { padding: 20px; text-align: center; opacity: .75; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Match Log</h1>
+  <p class="sub">Track your hitting, blocking, and serving, match by match.</p>
+
+  <section class="card" aria-label="Season totals">
+    <div class="totals" id="totals"></div>
+  </section>
+
+  <h2>Add a match</h2>
+  <section class="card">
+    <div class="row">
+      <label>Date <input type="date" id="date"></label>
+      <label>Opponent <input type="text" id="opp" placeholder="Team name"></label>
+    </div>
+    <h2 style="font-size:1.05rem">Attacking</h2>
+    <div class="row">
+      <label>Kills <input type="number" min="0" id="kills" value="0"></label>
+      <label>Attack errors <input type="number" min="0" id="aerr" value="0"></label>
+      <label>Total attempts <input type="number" min="0" id="att" value="0"></label>
+    </div>
+    <h2 style="font-size:1.05rem">Blocking</h2>
+    <div class="row">
+      <label>Solo blocks <input type="number" min="0" id="solo" value="0"></label>
+      <label>Block assists <input type="number" min="0" id="assist" value="0"></label>
+      <label>Block errors <input type="number" min="0" id="berr" value="0"></label>
+    </div>
+    <h2 style="font-size:1.05rem">Serving</h2>
+    <div class="row">
+      <label>Aces <input type="number" min="0" id="aces" value="0"></label>
+      <label>Service errors <input type="number" min="0" id="serr" value="0"></label>
+    </div>
+    <button id="add">Save match</button>
+    <div id="msg" role="status"></div>
+  </section>
+
+  <h2>Matches</h2>
+  <section class="card scroll">
+    <table>
+      <thead>
+        <tr><th>Date</th><th>Opponent</th><th>K</th><th>E</th><th>TA</th><th>Hit %</th><th>Blocks</th><th>Aces</th><th></th></tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="empty" id="empty">No matches yet. Add your first one above.</div>
+  </section>
+</main>
+
+<script>
+// Hitting % = (kills - errors) / total attempts
+// Total blocks = solo blocks + (block assists * 0.5), the standard way to count them
+const KEY = "matchlog-v1";
+const $ = id => document.getElementById(id);
+const num = id => Math.max(0, parseInt($(id).value, 10) || 0);
+
+// Saved in this browser only. Wrapped in try/catch in case storage is blocked.
+function load() {
+  try { return JSON.parse(localStorage.getItem(KEY)) || []; }
+  catch (e) { return []; }
+}
+function save(list) {
+  try { localStorage.setItem(KEY, JSON.stringify(list)); }
+  catch (e) { $("msg").textContent = "Couldn’t save. Your browser may be blocking storage."; }
+}
+
+let matches = load();
+
+function hitPct(k, e, ta) {
+  return ta > 0 ? (k - e) / ta : null;
+}
+function fmtPct(p) {
+  return p === null ? "–" : p.toFixed(3).replace(/^0\./, ".").replace(/^-0\./, "-.");
+}
+function pctClass(p) {
+  if (p === null) return "";
+  return p >= 0.3 ? "pos" : p < 0.1 ? "neg" : "";
+}
+function blocks(m) { return m.solo + m.assist * 0.5; }
+
+function render() {
+  const tbody = $("rows");
+  tbody.innerHTML = "";
+  $("empty").style.display = matches.length ? "none" : "block";
+
+  matches.forEach((m, i) => {
+    const p = hitPct(m.kills, m.aerr, m.att);
+    const tr = document.createElement("tr");
+    const cells = [m.date, m.opp, m.kills, m.aerr, m.att, fmtPct(p), blocks(m), m.aces];
+    cells.forEach((v, idx) => {
+      const td = document.createElement("td");
+      td.textContent = v;           // textContent keeps user input from being run as HTML
+      if (idx === 5) td.className = pctClass(p);
+      tr.appendChild(td);
+    });
+    const td = document.createElement("td");
+    const del = document.createElement("button");
+    del.className = "small"; del.textContent = "Delete";
+    del.onclick = () => { matches.splice(i, 1); save(matches); render(); };
+    td.appendChild(del); tr.appendChild(td);
+    tbody.appendChild(tr);
+  });
+
+  // Season totals
+  const sum = f => matches.reduce((s, m) => s + f(m), 0);
+  const K = sum(m => m.kills), E = sum(m => m.aerr), TA = sum(m => m.att);
+  const games = matches.length;
+  const B = sum(blocks);
+  const stats = [
+    [games, "Matches"],
+    [K, "Kills"],
+    [fmtPct(hitPct(K, E, TA)), "Hitting %"],
+    [B, "Total blocks"],
+    [games ? (B / games).toFixed(1) : "–", "Blocks per match"],
+    [sum(m => m.aces), "Aces"]
+  ];
+  $("totals").innerHTML = "";
+  stats.forEach(([v, label]) => {
+    const d = document.createElement("div");
+    d.innerHTML = "<b></b><span></span>";
+    d.firstChild.textContent = v;
+    d.lastChild.textContent = label;
+    $("totals").appendChild(d);
+  });
+}
+
+$("add").onclick = () => {
+  const opp = $("opp").value.trim();
+  if (!opp) { $("msg").textContent = "Enter an opponent name to save this match."; return; }
+  if (num("att") < num("kills") + num("aerr")) {
+    $("msg").textContent = "Total attempts must be at least kills plus errors.";
+    return;
+  }
+  matches.unshift({
+    date: $("date").value || new Date().toISOString().slice(0, 10),
+    opp, kills: num("kills"), aerr: num("aerr"), att: num("att"),
+    solo: num("solo"), assist: num("assist"), berr: num("berr"),
+    aces: num("aces"), serr: num("serr")
+  });
+  save(matches);
+  ["kills","aerr","att","solo","assist","berr","aces","serr"].forEach(id => $(id).value = 0);
+  $("opp").value = "";
+  $("msg").textContent = "Match saved.";
+  render();
+};
+
+$("date").value = new Date().toISOString().slice(0, 10);
+render();
+</script>
+</body>
+</html>
